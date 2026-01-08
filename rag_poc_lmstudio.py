@@ -4,6 +4,7 @@ from pypdf import PdfReader
 import chromadb
 from sentence_transformers import SentenceTransformer
 import glob
+import sys
 
 
 # ======================
@@ -16,9 +17,9 @@ PDF_PATHS = glob.glob("data/*.pdf")
 print(PDF_PATHS)
 
 EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"  # léger, marche bien en local
-CHUNK_SIZE = 1200          # en caractères (simple pour démarrer)
-CHUNK_OVERLAP = 200
-TOP_K = 4
+CHUNK_SIZE = 700          # en caractères (simple pour démarrer)
+CHUNK_OVERLAP = 150
+TOP_K = 10
 TIMEOUT_S = 180
 
 SYSTEM_PROMPT = (
@@ -57,8 +58,18 @@ def build_index():
     embedder = SentenceTransformer(EMBED_MODEL_NAME)
     print("→ Embedding model loaded.")
 
-    client = chromadb.Client()
-    col = client.get_or_create_collection("docs")
+    # Use persistent storage instead of in-memory
+    #client = chromadb.Client()
+    client = chromadb.PersistentClient(path="./chroma_db")
+    
+    # Delete existing collection if it exists (for clean rebuild)
+    try:
+        client.delete_collection("docs")
+    except:
+        pass
+    
+    col = client.create_collection("docs")
+    #col = client.get_or_create_collection("docs")
 
     ids = []
     docs = []
@@ -133,21 +144,22 @@ def ask_lmstudio(question: str, retrieved_chunks):
 # MAIN DEMO
 # ======================
 if __name__ == "__main__":
-    print("Building index...")
-    col, embedder = build_index()
-    print("OK.\n")
-    print(">>> READY FOR QUESTIONS <<<")
-    input("Appuie sur Entrée pour continuer...")
+    try:
+        print("Building index...")
+        col, embedder = build_index()
+        print("OK.\n")
 
-    while True:
-        q = input("Question (ou /exit) > ").strip()
-        if not q:
-            continue
-        if q == "/exit":
-            break
-
-        chunks = retrieve(col, embedder, q, TOP_K)
-        answer = ask_lmstudio(q, chunks)
-        print("\n--- Réponse ---")
-        print(answer)
-        print("--------------\n")
+        while True:
+            q = input("toi > ").strip()
+            if not q:
+                continue
+            if q == "/exit":
+                break
+#           print("\n[DEBUG] Extraits récupérés :")
+#           for i, (_, meta) in enumerate(chunks, 1):
+#                print(f"  {i}. {meta['source']} p.{meta['page']}")
+            chunks = retrieve(col, embedder, q, TOP_K)
+            answer = ask_lmstudio(q, chunks)
+            print(f"\nia  > {answer}\n")
+    except KeyboardInterrupt:
+        print("\nBye.")
