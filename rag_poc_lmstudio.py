@@ -6,8 +6,11 @@ import requests
 from pypdf import PdfReader
 import chromadb
 import glob
-import sys
+import logging
+from pypdf.errors import PdfReadError, PdfStreamError #éviter les fichiers corrompus 
 
+# Silence ChromaDB logs (IDs déjà existants, infos internes)
+logging.getLogger("chromadb").setLevel(logging.ERROR) 
 
 # ======================
 # CONFIG
@@ -17,7 +20,7 @@ LM_MODEL = "openai/gpt-oss-20b"
 
 #PDF_PATHS = glob.glob("data/*.pdf")
 PDF_PATHS = glob.glob("data/**/*.pdf", recursive=True)
-print(PDF_PATHS)
+#print(PDF_PATHS)
 
 EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5"
 
@@ -27,6 +30,8 @@ TOP_K = 10
 TIMEOUT_S = 180
 
 CHROMA_BATCH_SIZE = 500  # stable
+REBUILD_INDEX = False  # True UNIQUEMENT ajout de nouveaux pdfs
+
 
 
 #gestion des metadata sur les chunks=> version année, date du document. 
@@ -36,10 +41,11 @@ CHROMA_BATCH_SIZE = 500  # stable
 
 
 SYSTEM_PROMPT = (
-    "Tu es un assistant qui répond uniquement à partir des extraits fournis. "
+    "Tu es un assistant qui répond à partir des extraits fournis. "
     "Si l'info n'est pas dans les extraits, tu dis 'Je ne trouve pas dans les documents fournis'. "
     "Tu ajoutes des citations sous la forme [source:page]."
 )
+
 
 # ======================
 # TEXT UTILS
@@ -73,7 +79,7 @@ def embed_texts(texts):
     return [d["embedding"] for d in data]
 
 
-from pypdf.errors import PdfReadError, PdfStreamError
+
 
 def read_pdf(path: str):
     pages = []
@@ -96,14 +102,15 @@ def build_index():
 
     client = chromadb.PersistentClient(path="./chroma_db")
 
-    REBUILD_INDEX = True
-
-    if REBUILD_INDEX:
+    # Si on ne veut PAS rebuild
+    if not REBUILD_INDEX:
         try:
-            client.delete_collection("docs")
-            print("→ Existing collection deleted.")
+            col = client.get_collection("docs")
+            print("→ Index existant chargé (pas de rebuild).")
+            return col
         except Exception:
-            pass
+            print("→ Aucun index existant, création nécessaire.")
+
 
     # OBLIGATOIRE en ChromaDB 1.5.x
     col = client.get_or_create_collection(
