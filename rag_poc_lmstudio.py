@@ -15,7 +15,8 @@ import sys
 LM_BASE_URL = "http://127.0.0.1:1234/v1"
 LM_MODEL = "openai/gpt-oss-20b"
 
-PDF_PATHS = glob.glob("data/*.pdf")
+#PDF_PATHS = glob.glob("data/*.pdf")
+PDF_PATHS = glob.glob("data/**/*.pdf", recursive=True)
 print(PDF_PATHS)
 
 EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5"
@@ -24,6 +25,9 @@ CHUNK_SIZE = 700          # en caractères (simple pour démarrer)
 CHUNK_OVERLAP = 150
 TOP_K = 10
 TIMEOUT_S = 180
+
+CHROMA_BATCH_SIZE = 500  # stable
+
 
 #gestion des metadata sur les chunks=> version année, date du document. 
 #dans le retrive on utilise la cosinne car dans cette étude c'est la meilleur (similarité )
@@ -69,12 +73,19 @@ def embed_texts(texts):
     return [d["embedding"] for d in data]
 
 
+from pypdf.errors import PdfReadError, PdfStreamError
+
 def read_pdf(path: str):
-    reader = PdfReader(path)
     pages = []
-    for i, page in enumerate(reader.pages):
-        pages.append((i + 1, page.extract_text() or ""))
+    try:
+        reader = PdfReader(path)
+        for i, page in enumerate(reader.pages):
+            pages.append((i + 1, page.extract_text() or ""))
+    except (PdfReadError, PdfStreamError, Exception) as e:
+        print(f"[WARN] PDF ignoré (invalide) : {path}")
+        print(f"       Raison : {e}")
     return pages
+
 
 # ======================
 # INDEX BUILD
@@ -132,15 +143,26 @@ def build_index():
 
     print("→ Encoding chunks...")
     embs = embed_texts(docs)
-
     print("→ Encoding done.")
 
-    col.add(
-        ids=ids,
-        documents=docs,
-        metadatas=metas,
-        embeddings=embs
-    )
+#    col.add(
+#        ids=ids,
+#        documents=docs,
+#        metadatas=metas,
+#        embeddings=embs
+#    )
+#
+#    return col
+
+    print("→ Adding chunks to ChromaDB...")
+    for i in range(0, len(ids), CHROMA_BATCH_SIZE):
+        col.add(
+            ids=ids[i:i + CHROMA_BATCH_SIZE],
+            documents=docs[i:i + CHROMA_BATCH_SIZE],
+            metadatas=metas[i:i + CHROMA_BATCH_SIZE],
+            embeddings=embs[i:i + CHROMA_BATCH_SIZE],
+        )
+    print(f"  - Batch {i} → {min(i + CHROMA_BATCH_SIZE, len(ids))}")
 
     return col
 
