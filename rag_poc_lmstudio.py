@@ -1,3 +1,5 @@
+#Ce projet est basé sur ChromaDB 0.4.x
+#pip install chromadb==0.4.24 sentence-transformers==5.2.0 pypdf==5.1.0 requests==2.32.3
 import os
 import requests
 from pypdf import PdfReader
@@ -21,6 +23,12 @@ CHUNK_SIZE = 700          # en caractères (simple pour démarrer)
 CHUNK_OVERLAP = 150
 TOP_K = 10
 TIMEOUT_S = 180
+
+#gestion des metadata sur les chunks=> version année, date du document. 
+#dans le retrive on utilise la cosinne car dans cette étude c'est la meilleur (similarité )
+#system prompt dynamique
+#les question qu'on s'est posé, quelle elemenet on ts'est intéressé (littérature, choix de la similarité cosinus, etc)
+
 
 SYSTEM_PROMPT = (
     "Tu es un assistant qui répond uniquement à partir des extraits fournis. "
@@ -53,29 +61,32 @@ def read_pdf(path: str):
 # ======================
 # INDEX BUILD
 # ======================
+
 def build_index():
     print("→ Loading embedding model...")
     embedder = SentenceTransformer(EMBED_MODEL_NAME)
     print("→ Embedding model loaded.")
 
-    # Use persistent storage instead of in-memory
-    #client = chromadb.Client()
     client = chromadb.PersistentClient(path="./chroma_db")
-    
-    # Delete existing collection if it exists (for clean rebuild)
-    try:
-        client.delete_collection("docs")
-    except:
-        pass
-    
-    col = client.create_collection("docs")
-    #col = client.get_or_create_collection("docs")
 
-    ids = []
-    docs = []
-    metas = []
+    REBUILD_INDEX = True
 
+    if REBUILD_INDEX:
+        try:
+            client.delete_collection("docs")
+            print("→ Existing collection deleted.")
+        except Exception:
+            pass
+
+    # OBLIGATOIRE en ChromaDB 1.5.x
+    col = client.get_or_create_collection(
+        name="docs",
+        metadata={"hnsw:space": "cosine"}
+    )
+
+    ids, docs, metas = [], [], []
     doc_id = 0
+
     for pdf_path in PDF_PATHS:
         pages = read_pdf(pdf_path)
         base = os.path.basename(pdf_path)
@@ -83,33 +94,63 @@ def build_index():
         for page_num, page_text in pages:
             if not page_text.strip():
                 continue
-            for c_idx, chunk in enumerate(chunk_text(page_text, CHUNK_SIZE, CHUNK_OVERLAP)):
+
+            for c_idx, chunk in enumerate(
+                chunk_text(page_text, CHUNK_SIZE, CHUNK_OVERLAP)
+            ):
+                if len(chunk) < 100:
+                    continue
+
                 doc_id += 1
                 ids.append(f"{base}:{page_num}:{c_idx}:{doc_id}")
                 docs.append(chunk)
-                metas.append({"source": base, "page": page_num})  
+                metas.append({
+                    "source": base,
+                    "page": page_num,
+                    "chunk_id": c_idx
+                })
+
     print(f"→ Nombre de chunks à encoder : {len(docs)}")
     if not docs:
-        raise RuntimeError("Aucun texte extrait des PDFs (docs est vide).")
+        raise RuntimeError("Aucun texte extrait des PDFs.")
 
     print("→ Encoding chunks...")
-    embs = embedder.encode(docs, normalize_embeddings=True).tolist()
+    embs = embedder.encode(
+        docs,
+        normalize_embeddings=True,
+        show_progress_bar=False
+    ).tolist()
     print("→ Encoding done.")
 
-    col.add(ids=ids, documents=docs, metadatas=metas, embeddings=embs)
+    col.add(
+        ids=ids,
+        documents=docs,
+        metadatas=metas,
+        embeddings=embs
+    )
 
     return col, embedder
+
 
 # ======================
 # RETRIEVE
 # ======================
+
 def retrieve(col, embedder, question: str, k: int):
     q_emb = embedder.encode([question], normalize_embeddings=True).tolist()[0]
-    res = col.query(query_embeddings=[q_emb], n_results=k, include=["documents", "metadatas"])
+
+    res = col.query(
+        query_embeddings=[q_emb],
+        n_results=k,
+        include=["documents", "metadatas"]
+    )
+
     chunks = []
     for doc, meta in zip(res["documents"][0], res["metadatas"][0]):
         chunks.append((doc, meta))
+
     return chunks
+
 
 # ======================
 # GENERATE (LM STUDIO)
