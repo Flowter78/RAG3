@@ -1,10 +1,10 @@
 #Ce projet est basé sur ChromaDB 0.4.x
-#pip install chromadb==0.4.24 sentence-transformers==5.2.0 pypdf==5.1.0 requests==2.32.3
+#pip install chromadb==0.4.24 pypdf==5.1.0 requests==2.32.3
+
 import os
 import requests
 from pypdf import PdfReader
 import chromadb
-from sentence_transformers import SentenceTransformer
 import glob
 import sys
 
@@ -18,7 +18,8 @@ LM_MODEL = "openai/gpt-oss-20b"
 PDF_PATHS = glob.glob("data/*.pdf")
 print(PDF_PATHS)
 
-EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"  # léger, marche bien en local
+EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5"
+
 CHUNK_SIZE = 700          # en caractères (simple pour démarrer)
 CHUNK_OVERLAP = 150
 TOP_K = 10
@@ -51,6 +52,23 @@ def chunk_text(text: str, size: int, overlap: int):
         start = max(0, end - overlap)
     return chunks
 
+def embed_texts(texts):
+    payload = {
+        "model": EMBEDDING_MODEL,
+        "input": texts
+    }
+
+    r = requests.post(
+        f"{LM_BASE_URL}/embeddings",
+        json=payload,
+        timeout=TIMEOUT_S
+    )
+    r.raise_for_status()
+
+    data = r.json()["data"]
+    return [d["embedding"] for d in data]
+
+
 def read_pdf(path: str):
     reader = PdfReader(path)
     pages = []
@@ -63,9 +81,7 @@ def read_pdf(path: str):
 # ======================
 
 def build_index():
-    print("→ Loading embedding model...")
-    embedder = SentenceTransformer(EMBED_MODEL_NAME)
-    print("→ Embedding model loaded.")
+    print("→ Using LM Studio embeddings:", EMBEDDING_MODEL)
 
     client = chromadb.PersistentClient(path="./chroma_db")
 
@@ -115,11 +131,8 @@ def build_index():
         raise RuntimeError("Aucun texte extrait des PDFs.")
 
     print("→ Encoding chunks...")
-    embs = embedder.encode(
-        docs,
-        normalize_embeddings=True,
-        show_progress_bar=False
-    ).tolist()
+    embs = embed_texts(docs)
+
     print("→ Encoding done.")
 
     col.add(
@@ -129,15 +142,15 @@ def build_index():
         embeddings=embs
     )
 
-    return col, embedder
+    return col
 
 
 # ======================
 # RETRIEVE
 # ======================
 
-def retrieve(col, embedder, question: str, k: int):
-    q_emb = embedder.encode([question], normalize_embeddings=True).tolist()[0]
+def retrieve(col, question: str, k: int):
+    q_emb = embed_texts([question])[0]
 
     res = col.query(
         query_embeddings=[q_emb],
@@ -187,7 +200,7 @@ def ask_lmstudio(question: str, retrieved_chunks):
 if __name__ == "__main__":
     try:
         print("Building index...")
-        col, embedder = build_index()
+        col = build_index()
         print("OK.\n")
 
         while True:
@@ -199,7 +212,7 @@ if __name__ == "__main__":
 #           print("\n[DEBUG] Extraits récupérés :")
 #           for i, (_, meta) in enumerate(chunks, 1):
 #                print(f"  {i}. {meta['source']} p.{meta['page']}")
-            chunks = retrieve(col, embedder, q, TOP_K)
+            chunks = retrieve(col, q, TOP_K)
             answer = ask_lmstudio(q, chunks)
             print(f"\nia  > {answer}\n")
     except KeyboardInterrupt:
