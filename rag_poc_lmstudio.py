@@ -39,12 +39,41 @@ REBUILD_INDEX = False  # True UNIQUEMENT ajout de nouveaux pdfs
 #system prompt dynamique
 #les question qu'on s'est posé, quelle elemenet on ts'est intéressé (littérature, choix de la similarité cosinus, etc)
 
-
-SYSTEM_PROMPT = (
+PROMPT_BASE = (
     "Tu es un assistant qui répond à partir des extraits fournis. "
     "Si l'info n'est pas dans les extraits, tu dis 'Je ne trouve pas dans les documents fournis'. "
-    "Tu ajoutes des citations sous la forme [source:page]."
+    "Tu ajoutes des citations sous la forme [source:page]."    
 )
+PROMPT_DEFINITION = (
+   "Donne une définition claire et concise."
+   "Une phrase principale maximum, puis un court complément si nécessaire."
+   "Pas d’exemple non présent dans les extraits."
+)
+PROMPT_REVISION = (
+    "Aide à la révision."
+    "Réponse courte, factuelle, facile à mémoriser."
+    "Utilise des listes à puces si pertinent."
+)
+PROMPT_LISTE = (
+    "Structure la réponse sous forme de liste claire."
+    "Chaque point doit correspondre à une information explicite des extraits."
+)
+PROMPT_EXPLICATION = (
+    "Explique de manière progressive et logique."
+    "Ne fais aucune hypothèse."
+    "Ne complète pas avec des connaissances externes."
+)
+
+SYSTEM_PROMPT = PROMPT_BASE
+
+PROMPTS = {
+    "definition": PROMPT_BASE + PROMPT_DEFINITION,
+    "revision": PROMPT_BASE + PROMPT_REVISION,
+    "liste": PROMPT_BASE + PROMPT_LISTE,
+    "explication": PROMPT_BASE + PROMPT_EXPLICATION,
+}
+
+
 
 
 # ======================
@@ -79,8 +108,6 @@ def embed_texts(texts):
     return [d["embedding"] for d in data]
 
 
-
-
 def read_pdf(path: str):
     pages = []
     try:
@@ -91,6 +118,21 @@ def read_pdf(path: str):
         print(f"[WARN] PDF ignoré (invalide) : {path}")
         print(f"       Raison : {e}")
     return pages
+
+def detect_intent(question: str):
+    q = question.lower()
+
+    if q.startswith(("qu'est-ce", "définir", "definition")):
+        return "definition"
+
+    if q.startswith(("donne", "liste", "objectifs", "principes")):
+        return "liste"
+
+    if any(word in q for word in ["pourquoi", "comment", "expliquer"]):
+        return "explication"
+
+    return "revision"
+
 
 
 # ======================
@@ -197,7 +239,7 @@ def retrieve(col, question: str, k: int):
 # ======================
 # GENERATE (LM STUDIO)
 # ======================
-def ask_lmstudio(question: str, retrieved_chunks):
+def ask_lmstudio(question: str, retrieved_chunks, system_prompt: str):
     context_lines = []
     for i, (chunk, meta) in enumerate(retrieved_chunks, 1):
         context_lines.append(f"EXTRAIT {i} [{meta['source']}:{meta['page']}]\n{chunk}\n")
@@ -211,7 +253,7 @@ def ask_lmstudio(question: str, retrieved_chunks):
     payload = {
         "model": LM_MODEL,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
         "temperature": 0.2,
@@ -238,11 +280,13 @@ if __name__ == "__main__":
                 continue
             if q == "/exit":
                 break
-#           print("\n[DEBUG] Extraits récupérés :")
-#           for i, (_, meta) in enumerate(chunks, 1):
-#                print(f"  {i}. {meta['source']} p.{meta['page']}")
-            chunks = retrieve(col, q, TOP_K)
-            answer = ask_lmstudio(q, chunks)
+            
+            intent = detect_intent(q)           #Détection de l’intention utilisateur
+            print(intent)
+            system_prompt = PROMPTS[intent]     #Sélection du system prompt adapté
+            chunks = retrieve(col, q, TOP_K)    #Retrieval
+            answer = ask_lmstudio(q, chunks, system_prompt)    #Génération avec prompt dynamique
+
             print(f"\nia  > {answer}\n")
     except KeyboardInterrupt:
         print("\nBye.")
