@@ -1,2 +1,8 @@
 chroma_db/
-data/Livres
+*.sqlite3
+.venv/
+__pycache__/
+evaluation_results/
+data/
+../CNEOC
+

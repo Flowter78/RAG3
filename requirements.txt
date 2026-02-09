@@ -1,0 +1,8 @@
+chromadb==0.4.24
+matplotlib==3.7.1
+numpy==2.4.1
+pandas==2.3.3
+pypdf==6.6.0
+Requests==2.32.5
+seaborn==0.13.2
+streamlit==1.41.1

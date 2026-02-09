@@ -8,6 +8,8 @@ import chromadb
 import glob
 import logging
 from pypdf.errors import PdfReadError, PdfStreamError #éviter les fichiers corrompus 
+import pandas as pd
+
 
 # Silence ChromaDB logs (IDs déjà existants, infos internes)
 logging.getLogger("chromadb").setLevel(logging.ERROR) 
@@ -16,7 +18,9 @@ logging.getLogger("chromadb").setLevel(logging.ERROR)
 # CONFIG
 # ======================
 LM_BASE_URL = "http://127.0.0.1:1234/v1"
-LM_MODEL = "openai/gpt-oss-20b"
+LM_MODEL = "qwen/qwen3-vl-4b"
+print(LM_MODEL)
+
 
 #PDF_PATHS = glob.glob("data/*.pdf")
 PDF_PATHS = glob.glob("data/**/*.pdf", recursive=True)
@@ -27,11 +31,10 @@ EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5"
 CHUNK_SIZE = 700          # en caractères (simple pour démarrer)
 CHUNK_OVERLAP = 150
 TOP_K = 10
-TIMEOUT_S = 180
+TIMEOUT_S = 500
 
 CHROMA_BATCH_SIZE = 500  # stable
-REBUILD_INDEX = False  # True UNIQUEMENT ajout de nouveaux pdfs
-
+REBUILD_INDEX = True  # True UNIQUEMENT ajout de nouveaux pdfs
 
 
 #gestion des metadata sur les chunks=> version année, date du document. 
@@ -73,7 +76,16 @@ PROMPTS = {
     "explication": PROMPT_BASE + PROMPT_EXPLICATION,
 }
 
-
+SYSTEM_PROMPT_QCM = (
+    "Tu réponds à une question à choix multiples (QCM). "
+    "Analyse chaque proposition (A, B, C, D, E) en te basant UNIQUEMENT sur les extraits fournis. "
+    "Pour chaque proposition, indique si elle est EXACTE ou FAUSSE. "
+    "Format de réponse attendu:\n"
+    "A. [EXACTE/FAUSSE] - justification courte\n"
+    "B. [EXACTE/FAUSSE] - justification courte\n"
+    "etc.\n\n"
+    "Puis conclus avec: RÉPONSE FINALE: [lettres des propositions exactes, ex: A, C, D]"
+)
 
 
 # ======================
@@ -265,9 +277,11 @@ def ask_lmstudio(question: str, retrieved_chunks, system_prompt: str):
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
 
+
 # ======================
 # MAIN DEMO
 # ======================
+
 if __name__ == "__main__":
     try:
         print("Building index...")
@@ -282,11 +296,13 @@ if __name__ == "__main__":
                 break
             
             intent = detect_intent(q)           #Détection de l’intention utilisateur
-            print(intent)
-            system_prompt = PROMPTS[intent]     #Sélection du system prompt adapté
+            #print(intent)
+            #system_prompt = SYSTEM_PROMPT_QCM         #validation modele et
+            system_prompt = PROMPTS[intent]     #Sélection du system prompt adapté dynamique
             chunks = retrieve(col, q, TOP_K)    #Retrieval
             answer = ask_lmstudio(q, chunks, system_prompt)    #Génération avec prompt dynamique
-
             print(f"\nia  > {answer}\n")
+
     except KeyboardInterrupt:
         print("\nBye.")
+
